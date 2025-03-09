@@ -1,0 +1,25 @@
+{
+    "base_dir": "data",
+    "models": {
+        "embedding": {
+            "model_path": "models/bge-base-zh-v1.5",
+            "model_type": "bge"
+        },
+        "llm": {
+            "model_path": "models/Qwen-1_8B-Chat",
+            "model_type": "qwen"
+        }
+    },
+    "vector_store": {
+        "directory": "data/vector_store",
+        "index_type": "l2"
+    },
+    "text_splitter": {
+        "chunk_size": 500,
+        "chunk_overlap": 50,
+        "separator": "\n"
+    },
+    "retrieval": {
+        "top_k": 5
+    }
+}

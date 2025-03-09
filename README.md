@@ -12,9 +12,10 @@
 - 基于向量检索的智能问答
   - 混合检索策略（BM25 + 向量检索）
   - 元数据过滤（按时间、来源等）
-  - 支持多种LLM（OpenAI、HuggingFace模型）
+  - 支持多种LLM（OpenAI、HuggingFace模型、本地小型模型）
 - 简洁易用的命令行工具
 - 友好的Gradio用户界面（开发中）
+- 支持流式输出回答
 
 ## 安装
 
@@ -31,6 +32,16 @@ cd rss-rag
 pip install -r requirements.txt
 ```
 
+3. 下载必要的模型：
+
+```bash
+# 下载Embedding模型
+git clone https://huggingface.co/BAAI/bge-base-zh-v1.5 models/bge-base-zh-v1.5
+
+# 下载LLM模型（可选，如果使用本地模型）
+git clone https://huggingface.co/Qwen/Qwen-1_8B-Chat models/Qwen-1_8B-Chat
+```
+
 ## 使用方法
 
 ### 初始化数据库
@@ -42,7 +53,7 @@ python main.py --setup
 或者：
 
 ```bash
-python scripts/setup_db.py
+python scripts/cli.py setup
 ```
 
 ### 命令行工具
@@ -140,11 +151,16 @@ python scripts/cli.py ask "数据科学入门" --days 7
 ```
 rss-rag/
 ├── data/                  # 数据存储目录
-│   └── rss.db             # SQLite数据库
+│   ├── rss.db             # SQLite数据库
+│   └── vector_store/      # 向量数据库存储
+├── models/                # 模型存储目录
+│   ├── bge-base-zh-v1.5/  # BGE Embedding模型
+│   └── Qwen-1_8B-Chat/    # Qwen LLM模型（可选）
 ├── src/                   # 源代码
 │   ├── rss/               # RSS相关模块
 │   │   ├── __init__.py
 │   │   ├── parser.py      # RSS解析器
+│   │   ├── opml_parser.py # OPML解析器
 │   │   ├── models.py      # 数据模型
 │   │   └── storage.py     # 数据存储
 │   ├── rag/               # RAG相关模块
@@ -155,38 +171,153 @@ rss-rag/
 │   │   ├── retrieval/     # 检索模块
 │   │   ├── llm/           # LLM模块
 │   │   └── utils/         # 工具函数
+│   ├── utils/             # 通用工具函数
 │   └── ui/                # UI相关模块（开发中）
-│       └── __init__.py
 ├── scripts/               # 脚本文件
 │   ├── setup_db.py        # 数据库初始化
 │   └── cli.py             # 命令行工具
 ├── tests/                 # 测试文件
-│   └── test_rag.py        # RAG测试
+├── config/                # 配置文件目录
 ├── requirements.txt       # 依赖项
-├── README.md              # 项目说明
+├── requirements-dev.txt   # 开发依赖项
 └── main.py                # 主入口
 ```
 
-## 开发计划
+## 系统架构
 
-- [x] 基础RSS解析器实现
-- [x] 数据存储功能
-- [x] 命令行工具
-- [x] RAG系统实现
-  - [x] 文本分块
-  - [x] 向量化处理
-  - [x] 混合检索策略
-  - [x] LLM集成
-- [ ] Gradio UI开发
-- [ ] 性能优化
+RSS-RAG系统由以下主要组件构成：
 
-## 贡献
+### 1. RSS处理模块
+- **RSSParser**: 负责解析RSS源和条目
+- **OPMLParser**: 解析OPML文件，支持批量导入RSS源
+- **RSSStorage**: 管理SQLite数据库，存储RSS源和条目
 
-欢迎提交问题和拉取请求！
+### 2. RAG核心模块
+- **RSSRAG**: 系统主类，协调各组件工作
+- **EmbeddingModel**: 文本向量化模型，基于BGE等模型
+- **HybridRetriever**: 混合检索器，结合BM25和向量检索
+- **TextSplitter**: 文本分块工具，优化长文本处理
 
-## 许可证
+### 3. LLM模块
+- **BaseLLM**: LLM基类，定义通用接口
+- **OpenAILLM**: OpenAI API集成
+- **HuggingFaceLLM**: HuggingFace模型集成
+- **TinyLLM**: 本地小型模型集成，支持多种模型格式
 
-MIT 
+### 4. 用户界面
+- 命令行工具: 提供完整的RSS管理和问答功能
+- Gradio UI: 友好的Web界面（开发中）
+
+## 高级功能
+
+### 1. 混合检索策略
+
+RSS-RAG采用混合检索策略，结合BM25和向量检索的优势：
+
+```python
+def search(self,
+          query: str,
+          top_k: int = 3,
+          metadata_filters: Optional[Dict] = None,
+          weights: Optional[Dict[str, float]] = None):
+    if weights is None:
+        weights = {'bm25': 0.3, 'vector': 0.7}
+    # ...
+```
+
+### 2. 增强RAG提示词模板
+
+系统支持两种RAG提示词模板：
+
+1. **原始模板**：直接基于检索结果生成回答
+2. **增强模板**：先生成初步回答，再基于检索结果修正，提高回答质量
+
+```python
+# 增强RAG提示词模板
+ENHANCED_RAG_PROMPT_TEMPLATE = """参考信息：
+{context}
+---
+我的问题或指令：
+{question}
+---
+我的回答：
+{answer}
+---
+请根据上述参考信息回答和我的问题或指令，修正我的回答。前面的参考信息和我的回答可能有用，也可能没用，你需要从我给出的参考信息中选出与我的问题最相关的那些，来为你修正的回答提供依据。回答一定要忠于原文，简洁但不丢信息，不要胡乱编造。我的问题或指令是什么语种，你就用什么语种回复。
+你修正的回答:"""
+```
+
+### 3. 流式输出
+
+系统支持流式生成回答，提供更好的用户体验：
+
+```python
+def answer_stream(self, 
+               query: str,
+               feed_id: Optional[int] = None,
+               date_range: Optional[Tuple[datetime, datetime]] = None,
+               top_k: Optional[int] = None) -> Iterator[str]:
+    # ...
+```
+
+### 4. 并行处理
+
+支持并行处理RSS条目，提高数据处理效率：
+
+```python
+def _process_entries_parallel(self, entries: List[Entry]):
+    with ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
+        futures = {executor.submit(self.process_entry, entry): entry for entry in entries}
+        for future in tqdm(as_completed(futures), total=len(entries)):
+            try:
+                future.result()
+            except Exception as exc:
+                logger.error(f"处理条目时出错: {exc}")
+```
+
+## 配置说明
+
+系统通过`RAGConfig`类管理配置：
+
+```python
+class RAGConfig:
+    def __init__(self,
+                 vector_store_path: str = "data/vector_store",
+                 embedding_model_path: str = "models/bge-base-zh-v1.5",
+                 llm_type: str = "openai",
+                 llm_model: str = "gpt-3.5-turbo",
+                 llm_api_key: Optional[str] = None,
+                 chunk_size: int = 500,
+                 chunk_overlap: int = 50,
+                 top_k: int = 5,
+                 use_enhanced_rag: bool = True,
+                 use_parallel: bool = True):
+    # ...
+```
+
+主要配置项：
+- `vector_store_path`: 向量数据库存储路径
+- `embedding_model_path`: Embedding模型路径
+- `llm_type`: LLM类型（openai、huggingface、tiny）
+- `llm_model`: 使用的模型名称
+- `chunk_size`: 文本分块大小
+- `use_enhanced_rag`: 是否使用增强RAG策略
+- `use_parallel`: 是否使用并行处理
+
+## 模型支持
+
+### 1. Embedding模型
+- 默认使用BGE模型：[BAAI/bge-base-zh-v1.5](https://huggingface.co/BAAI/bge-base-zh-v1.5)
+- 支持自定义Embedding模型
+
+### 2. LLM模型
+- **OpenAI**: 支持GPT-3.5、GPT-4等模型
+- **HuggingFace**: 支持HuggingFace上的开源模型
+- **TinyLLM**: 支持本地部署的小型模型，包括：
+  - Qwen系列模型
+  - ChatGLM系列模型
+  - Llama/Mistral系列模型
+  - Baichuan系列模型
 
 ## RAG系统改进方案
 
@@ -448,29 +579,35 @@ class EnhancedCache:
 - 增加缓存过期时间设置，保证数据新鲜度
 - 优化内存使用，避免缓存过大占用资源
 
-### 5. 实施计划
+## 开发计划
 
-1. **阶段一：基础改进**
-   - 实现智能分句处理
-   - 优化混合检索策略
-   - 引入查询增强机制
+- [x] 基础RSS解析器实现
+- [x] 数据存储功能
+- [x] 命令行工具
+- [x] RAG系统实现
+  - [x] 文本分块
+  - [x] 向量化处理
+  - [x] 混合检索策略
+  - [x] LLM集成
+  - [x] 流式输出
+- [ ] 实现改进方案
+  - [ ] 智能分句处理
+  - [ ] 多阶段检索策略
+  - [ ] 查询增强
+  - [ ] 缓存优化
+- [ ] Gradio UI开发
+  - [ ] RSS源管理界面
+  - [ ] 条目浏览界面
+  - [ ] 问答界面
+- [ ] 性能优化
+  - [ ] 减少内存占用
+  - [ ] 提高检索速度
+  - [ ] 优化LLM调用
 
-2. **阶段二：高级功能**
-   - 添加重排序模块
-   - 优化提示词模板
-   - 实现并行处理
+## 贡献
 
-3. **阶段三：性能优化**
-   - 增强缓存策略
-   - 优化内存使用
-   - 提高整体响应速度
+欢迎提交问题和拉取请求！
 
-### 6. 依赖更新
+## 许可证
 
-```txt
-# 新增依赖
-modelscope>=1.9.5
-sentence-transformers>=2.2.2
-```
-
-以上改进方案基于TinyRAG的优秀实践，结合RSS-RAG的特点进行了定制化设计，将显著提升系统的检索精度和响应速度。 
+MIT 

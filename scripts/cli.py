@@ -238,14 +238,27 @@ def ask_question(args):
     """问答功能"""
     storage = RSSStorage(args.db_path)
     
-    # 创建RAG配置
-    config = RAGConfig(
-        base_dir="data/rag_db",
-        device="cuda",
-        # embedding_model_id=args.embedding_model,
-        # llm_model_id=args.llm_model,
-        top_k=args.top_k
-    )
+    # 如果指定了配置文件，从文件加载配置
+    if args.config and os.path.exists(args.config):
+        with open(args.config, 'r', encoding='utf-8') as f:
+            config_dict = json.load(f)
+        config = RAGConfig(**config_dict)
+    else:
+        # 创建RAG配置
+        config = RAGConfig(
+            base_dir="data/rag_db",
+            device="cuda",
+            top_k=args.top_k,
+            llm_type=args.llm_type
+        )
+        
+        # 根据LLM类型设置相应的参数
+        if args.llm_type == "deepseek":
+            config.deepseek_api_key = args.deepseek_api_key or os.environ.get("DEEPSEEK_API_KEY", "")
+            config.deepseek_model = args.deepseek_model
+        elif args.llm_type == "openai":
+            config.openai_api_key = args.openai_api_key or os.environ.get("OPENAI_API_KEY", "")
+            config.openai_model = args.openai_model
     
     # 初始化RAG系统
     rag = RSSRAG(config)
@@ -416,11 +429,15 @@ def main():
     ask_parser.add_argument('--feed', dest='feed_id', type=int, help='限制特定Feed')
     ask_parser.add_argument('--days', type=int, help='限制最近N天的内容')
     ask_parser.add_argument('--top-k', type=int, default=3, help='检索结果数量 (默认: 3)')
-    # ask_parser.add_argument('--embedding-model', 
-    #                       default='sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2',
-    #                       help='Embedding模型ID')
-    # ask_parser.add_argument('--llm-model', default='gpt-3.5-turbo',
-    #                       help='LLM模型ID')
+    ask_parser.add_argument('--llm-type', choices=['tiny', 'openai', 'huggingface', 'deepseek'], 
+                          default='deepseek', help='LLM类型 (默认: deepseek)')
+    ask_parser.add_argument('--deepseek-api-key', help='DeepSeek API密钥')
+    ask_parser.add_argument('--deepseek-model', default='deepseek-chat', 
+                          help='DeepSeek模型名称 (默认: deepseek-chat)')
+    ask_parser.add_argument('--openai-api-key', help='OpenAI API密钥')
+    ask_parser.add_argument('--openai-model', default='gpt-3.5-turbo', 
+                          help='OpenAI模型名称 (默认: gpt-3.5-turbo)')
+    ask_parser.add_argument('--config', help='配置文件路径 (JSON格式)')
     ask_parser.add_argument('--stream', action='store_true', help='流式输出')
     ask_parser.add_argument('--rebuild', action='store_true', 
                           help='重新构建RAG索引（否则使用增量更新）')

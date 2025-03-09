@@ -13,6 +13,7 @@ from .llm.base_llm import BaseLLM
 from .llm.openai_llm import OpenAILLM
 from .llm.huggingface_llm import HuggingFaceLLM
 from .llm.tiny_llm import TinyLLM
+from .llm.deepseek_llm import DeepSeekLLM
 from ..rss.models import Entry
 
 # 原始RAG提示词模板
@@ -108,25 +109,45 @@ class RSSRAG:
         """初始化LLM模型"""
         model_id = config.llm_model_id
         
-        # 根据模型ID选择合适的LLM实现
-        if config.use_tiny_llm:
+        # 根据LLM类型选择合适的LLM实现
+        if config.llm_type == "tiny":
             self.llm = TinyLLM(
                 model_path=model_id,
                 device=config.device,
                 temperature=0.7,
                 system_prompt=config.system_prompt
             )
-        elif model_id.startswith("gpt-") or "openai" in model_id.lower():
+        elif config.llm_type == "openai":
             self.llm = OpenAILLM(
-                model_name=model_id,
-                temperature=0.7
+                model_name=config.openai_model,
+                api_key=config.openai_api_key,
+                temperature=0.7,
+                system_prompt=config.system_prompt
             )
-        else:
-            # 默认使用HuggingFace模型
+        elif config.llm_type == "deepseek":
+            self.llm = DeepSeekLLM(
+                api_key=config.deepseek_api_key,
+                model=config.deepseek_model,
+                base_url=config.deepseek_base_url,
+                temperature=0.7,
+                system_prompt=config.system_prompt
+            )
+        elif config.llm_type == "huggingface":
+            # 使用HuggingFace模型
             self.llm = HuggingFaceLLM(
                 model_path=model_id,
                 device=config.device,
-                temperature=0.7
+                temperature=0.7,
+                system_prompt=config.system_prompt
+            )
+        else:
+            # 默认使用TinyLLM
+            logger.warning(f"未知的LLM类型: {config.llm_type}，使用TinyLLM作为默认值")
+            self.llm = TinyLLM(
+                model_path=model_id,
+                device=config.device,
+                temperature=0.7,
+                system_prompt=config.system_prompt
             )
             
         logger.info(f"初始化LLM: {model_id}")

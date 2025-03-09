@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Dict, Optional, Literal
 
 @dataclass
 class RAGConfig:
@@ -16,8 +16,17 @@ class RAGConfig:
     reranker_model_id: str = "models/bge-reranker-base"
     
     # LLM配置
-    use_tiny_llm: bool = True  # 是否使用TinyLLM
+    llm_type: Literal["tiny", "openai", "huggingface", "deepseek"] = "deepseek"  # LLM类型
     system_prompt: str = "你是一个有用的AI助手。"  # 系统提示词
+    
+    # DeepSeek配置
+    deepseek_api_key: str = ""  # DeepSeek API密钥
+    deepseek_model: str = "deepseek-chat"  # DeepSeek模型名称
+    deepseek_base_url: str = "https://api.deepseek.com"  # DeepSeek API基础URL
+    
+    # OpenAI配置
+    openai_api_key: str = ""  # OpenAI API密钥
+    openai_model: str = "gpt-3.5-turbo"  # OpenAI模型名称
     
     # 文本分割配置
     chunk_size: int = 500
@@ -28,10 +37,10 @@ class RAGConfig:
     # 检索配置
     top_k: int = 3
     search_weights: Optional[Dict[str, float]] = None  # 混合检索权重
-    use_reranker: bool = False  # 是否使用重排序
+    use_reranker: bool = True # 是否使用重排序
     
     # 查询增强配置
-    use_query_enhancement: bool = False  # 是否使用查询增强
+    use_query_enhancement: bool = False # 是否使用查询增强
     
     # 缓存配置
     use_cache: bool = True

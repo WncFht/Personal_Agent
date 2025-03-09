@@ -247,10 +247,10 @@ class HybridRetriever:
             if not self._apply_filters(doc, metadata_filters):
                 continue
                     
-            logger.debug(f"文档 {i}:")
-            logger.debug(f"  - BM25得分: {bm25_score:.4f}")
-            logger.debug(f"  - 向量相似度: {vector_score:.4f}")
-            logger.debug(f"  - 最终得分: {final_score:.4f}")
+            # logger.debug(f"文档 {i}:")
+            # logger.debug(f"  - BM25得分: {bm25_score:.4f}")
+            # logger.debug(f"  - 向量相似度: {vector_score:.4f}")
+            # logger.debug(f"  - 最终得分: {final_score:.4f}")
             
             scores.append((doc.text, final_score, doc.metadata))
             

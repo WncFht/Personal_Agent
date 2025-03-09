@@ -2,6 +2,8 @@
 
 基于RSS数据源的检索增强生成(RAG)系统，通过Gradio提供用户界面，实现智能问答功能。
 
+![alt text](docs/image.png)
+
 ## 功能特点
 
 - 支持添加、管理和更新RSS源

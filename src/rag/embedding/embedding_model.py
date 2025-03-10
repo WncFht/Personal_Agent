@@ -7,7 +7,7 @@ from loguru import logger
 class EmbeddingModel:
     """Embedding模型封装类"""
     
-    def __init__(self, model_path: str, device: str = "cuda"):
+    def __init__(self, model_path: str, device: str = "cpu"):
         """初始化embedding模型
         
         Args:

@@ -16,7 +16,7 @@
   - 元数据过滤（按时间、来源等）
   - 支持多种LLM（OpenAI、HuggingFace模型、本地小型模型）
 - 简洁易用的命令行工具
-- 友好的Gradio用户界面（开发中）
+- 友好的Gradio用户界面
 - 支持流式输出回答
 
 ## 安装
@@ -80,72 +80,10 @@ python scripts/cli.py [命令] [参数]
 - `export`: 导出数据
 - `ask`: 提问问题（RAG功能）
 
-#### 示例
-
-添加RSS源：
+### 启动Web界面
 
 ```bash
-python scripts/cli.py add https://example.com/feed.xml
-```
-
-导入OPML文件：
-
-```bash
-python scripts/cli.py import data/feeds.opml
-```
-
-导入OPML并获取条目：
-
-```bash
-python scripts/cli.py import data/feeds.opml --fetch
-```
-
-导入OPML并更新所有源：
-
-```bash
-python scripts/cli.py import data/feeds.opml --update
-```
-
-列出所有RSS源：
-
-```bash
-python scripts/cli.py list
-```
-
-查看条目详情：
-
-```bash
-python scripts/cli.py view 1 --content
-```
-
-标记所有条目为已读：
-
-```bash
-python scripts/cli.py mark-read --all
-```
-
-导出数据：
-
-```bash
-python scripts/cli.py export --output data/backup.json
-```
-
-提问问题：
-
-```bash
-python scripts/cli.py ask "Python有什么特点？"
-```
-
-按特定来源提问：
-
-```bash
-python scripts/cli.py ask "人工智能最新进展？" --feed 2
-```
-
-按时间范围提问：
-
-```bash
-python scripts/cli.py ask "数据科学入门" --days 7
+python run_ui.py
 ```
 
 ## 项目结构
@@ -174,7 +112,7 @@ rss-rag/
 │   │   ├── llm/           # LLM模块
 │   │   └── utils/         # 工具函数
 │   ├── utils/             # 通用工具函数
-│   └── ui/                # UI相关模块（开发中）
+│   └── ui/                # UI相关模块
 ├── scripts/               # 脚本文件
 │   ├── setup_db.py        # 数据库初始化
 │   └── cli.py             # 命令行工具
@@ -208,74 +146,7 @@ RSS-RAG系统由以下主要组件构成：
 
 ### 4. 用户界面
 - 命令行工具: 提供完整的RSS管理和问答功能
-- Gradio UI: 友好的Web界面（开发中）
-
-## 高级功能
-
-### 1. 混合检索策略
-
-RSS-RAG采用混合检索策略，结合BM25和向量检索的优势：
-
-```python
-def search(self,
-          query: str,
-          top_k: int = 3,
-          metadata_filters: Optional[Dict] = None,
-          weights: Optional[Dict[str, float]] = None):
-    if weights is None:
-        weights = {'bm25': 0.3, 'vector': 0.7}
-    # ...
-```
-
-### 2. 增强RAG提示词模板
-
-系统支持两种RAG提示词模板：
-
-1. **原始模板**：直接基于检索结果生成回答
-2. **增强模板**：先生成初步回答，再基于检索结果修正，提高回答质量
-
-```python
-# 增强RAG提示词模板
-ENHANCED_RAG_PROMPT_TEMPLATE = """参考信息：
-{context}
----
-我的问题或指令：
-{question}
----
-我的回答：
-{answer}
----
-请根据上述参考信息回答和我的问题或指令，修正我的回答。前面的参考信息和我的回答可能有用，也可能没用，你需要从我给出的参考信息中选出与我的问题最相关的那些，来为你修正的回答提供依据。回答一定要忠于原文，简洁但不丢信息，不要胡乱编造。我的问题或指令是什么语种，你就用什么语种回复。
-你修正的回答:"""
-```
-
-### 3. 流式输出
-
-系统支持流式生成回答，提供更好的用户体验：
-
-```python
-def answer_stream(self, 
-               query: str,
-               feed_id: Optional[int] = None,
-               date_range: Optional[Tuple[datetime, datetime]] = None,
-               top_k: Optional[int] = None) -> Iterator[str]:
-    # ...
-```
-
-### 4. 并行处理
-
-支持并行处理RSS条目，提高数据处理效率：
-
-```python
-def _process_entries_parallel(self, entries: List[Entry]):
-    with ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
-        futures = {executor.submit(self.process_entry, entry): entry for entry in entries}
-        for future in tqdm(as_completed(futures), total=len(entries)):
-            try:
-                future.result()
-            except Exception as exc:
-                logger.error(f"处理条目时出错: {exc}")
-```
+- Gradio UI: 友好的Web界面
 
 ## 配置说明
 
@@ -321,290 +192,136 @@ class RAGConfig:
   - Llama/Mistral系列模型
   - Baichuan系列模型
 
-## RAG系统改进方案
+## 项目改进待办清单
 
-基于对TinyRAG系统的分析和借鉴，我们对RSS-RAG系统进行了以下改进：
+### 架构优化
 
-### 1. 文本处理优化
+- [ ] **模块解耦与重构**
+  - [ ] 将`RSSRAG`类拆分为多个职责单一的类，遵循单一职责原则
+  - [ ] 实现依赖注入模式，减少组件间的硬编码依赖
+  - [ ] 设计统一的事件系统，用于组件间通信
 
-#### 1.1 智能分句处理
+- [ ] **配置系统改进**
+  - [ ] 实现分层配置系统，支持默认配置、用户配置和环境变量覆盖
+  - [ ] 添加配置验证机制，确保配置参数的有效性
+  - [ ] 支持热重载配置，无需重启应用
 
-当前实现：
-```python
-# 当前的TextSplitter实现
-class TextSplitter:
-    def __init__(
-        self,
-        chunk_size: int = 500,
-        chunk_overlap: int = 50,
-        separator: str = "\n",
-        keep_separator: bool = False
-    ):
-        # ...
-```
+- [ ] **数据层优化**
+  - [ ] 引入ORM框架（如SQLAlchemy）替代直接SQL操作
+  - [ ] 设计数据迁移机制，支持数据库结构升级
+  - [ ] 实现数据分区策略，优化大数据量下的性能
 
-改进方案：
-```python
-# 引入TinyRAG的SentenceSplitter
-class EnhancedTextSplitter:
-    def __init__(
-        self,
-        chunk_size: int = 500,
-        chunk_overlap: int = 50,
-        use_model: bool = False,
-        model_path: str = "damo/nlp_bert_document-segmentation_chinese-base",
-        device: str = "cuda"
-    ):
-        # ...
-```
+### 功能增强
 
-改进内容：
-- 引入基于BERT的文档分割模型，提高中文文本的分句质量
-- 增加语义感知的分块策略，保持语义完整性
-- 优化长文本处理逻辑，避免语义割裂
+- [ ] **检索系统升级**
+  - [ ] 实现多阶段检索策略：召回-重排-精排
+  - [ ] 添加语义缓存机制，避免重复计算相似查询
+  - [ ] 支持多模态检索，处理图片和文本混合内容
+  - [ ] 实现自适应检索权重，根据查询特征动态调整BM25和向量检索的权重
 
-### 2. 检索系统增强
+- [ ] **RAG策略优化**
+  - [ ] 实现查询改写（Query Rewriting）功能，提高检索相关性
+  - [ ] 添加上下文压缩（Context Compression）机制，优化长文本处理
+  - [ ] 支持多跳推理（Multi-hop Reasoning），处理复杂问题
+  - [ ] 实现自动评估机制，持续优化RAG效果
 
-#### 2.1 混合检索策略优化
+- [ ] **LLM集成增强**
+  - [ ] 支持模型量化，减少内存占用
+  - [ ] 实现模型热切换功能，无需重启应用
+  - [ ] 添加模型性能监控和自动选择机制
+  - [ ] 支持本地和云端模型混合部署
 
-当前实现：
-```python
-# 当前的HybridRetriever实现
-def search(self,
-          query: str,
-          top_k: int = 3,
-          metadata_filters: Optional[Dict] = None,
-          weights: Optional[Dict[str, float]] = None):
-    if weights is None:
-        weights = {'bm25': 0.3, 'vector': 0.7}
-    # ...
-```
+- [ ] **RSS处理增强**
+  - [ ] 实现内容去重机制，避免重复条目
+  - [ ] 添加内容分类和标签系统，提高内容组织效率
+  - [ ] 支持全文检索和RSS源健康监控
+  - [ ] 实现智能订阅推荐系统
 
-改进方案：
-```python
-# 引入TinyRAG的多阶段检索策略
-def search(self,
-          query: str,
-          top_k: int = 3,
-          metadata_filters: Optional[Dict] = None,
-          weights: Optional[Dict[str, float]] = None):
-    # 第一阶段：BM25和向量混合召回
-    recall_results = self._hybrid_recall(query, top_k * 2)
-    
-    # 第二阶段：重排序
-    if self.use_reranker:
-        reranked_results = self._rerank(query, recall_results)
-        return reranked_results[:top_k]
-    # ...
-```
+### 性能优化
 
-改进内容：
-- 引入多阶段检索策略，先召回后重排
-- 添加基于BGE-M3的重排序模块，提高检索精度
-- 优化BM25和向量检索的权重动态调整机制
+- [ ] **并发与异步处理**
+  - [ ] 使用asyncio替代线程池，提高IO密集型操作效率
+  - [ ] 实现任务队列系统，支持后台处理和任务优先级
+  - [ ] 优化数据处理流水线，减少阻塞操作
 
-#### 2.2 元数据过滤增强
+- [ ] **内存与存储优化**
+  - [ ] 实现数据分片存储，减少单次内存占用
+  - [ ] 添加数据过期策略，自动清理旧数据
+  - [ ] 优化向量存储结构，提高检索效率
 
-当前实现：
-```python
-# 当前的元数据过滤实现
-if metadata_filters:
-    match = True
-    for key, value in metadata_filters.items():
-        if callable(value):
-            if key not in doc.metadata or not value(doc.metadata[key]):
-                match = False
-                break
-        # ...
-```
+- [ ] **缓存策略优化**
+  - [ ] 实现多级缓存系统（内存、磁盘、分布式）
+  - [ ] 添加缓存预热机制，提高冷启动性能
+  - [ ] 实现智能缓存淘汰策略，基于访问频率和时间
 
-改进方案：
-```python
-# 增强的元数据过滤
-def _apply_filters(self, doc, metadata_filters):
-    # 基础过滤
-    if not self._basic_filter_match(doc, metadata_filters):
-        return False
-        
-    # 时间范围过滤
-    if not self._time_filter_match(doc, metadata_filters):
-        return False
-        
-    # 来源过滤
-    if not self._source_filter_match(doc, metadata_filters):
-        return False
-        
-    return True
-```
+### 用户体验提升
 
-改进内容：
-- 优化元数据过滤逻辑，提高过滤效率
-- 增加时间范围的智能解析，支持相对时间表达
-- 添加多级过滤策略，提高检索精度
+- [ ] **UI/UX改进**
+  - [ ] 重新设计Web界面，提高用户友好性
+  - [ ] 添加响应式设计，优化移动端体验
+  - [ ] 实现深色模式和主题定制功能
+  - [ ] 添加用户引导和帮助系统
 
-### 3. RAG流程优化
+- [ ] **交互功能增强**
+  - [ ] 实现会话历史管理，支持继续之前的对话
+  - [ ] 添加收藏和标记功能，方便内容管理
+  - [ ] 支持查询建议和自动补全功能
+  - [ ] 实现结果反馈机制，持续优化系统
 
-#### 3.1 查询增强
+- [ ] **可视化与分析**
+  - [ ] 添加RSS源统计和分析功能
+  - [ ] 实现用户行为分析，优化推荐系统
+  - [ ] 添加系统性能监控和可视化
 
-当前实现：
-```python
-# 当前的查询处理
-def answer(self, query: str, ...):
-    # 直接使用原始查询
-    search_results = self.search(query, ...)
-    # ...
-```
+### 开发与测试
 
-改进方案：
-```python
-# 引入TinyRAG的查询增强策略
-def answer(self, query: str, ...):
-    # 先用LLM生成初步回答
-    initial_answer = self.llm.generate(query)
-    
-    # 增强查询
-    enhanced_query = query + initial_answer + query
-    
-    # 使用增强查询检索
-    search_results = self.search(enhanced_query, ...)
-    # ...
-```
+- [ ] **测试框架建设**
+  - [ ] 实现单元测试覆盖所有核心组件
+  - [ ] 添加集成测试验证系统整体功能
+  - [ ] 设计性能测试评估系统性能瓶颈
+  - [ ] 实现自动化测试CI/CD流程
 
-改进内容：
-- 引入查询增强策略，提高检索相关性
-- 利用LLM初步回答扩展查询内容
-- 优化查询-文档匹配度计算
+- [ ] **开发工具改进**
+  - [ ] 使用Poetry或Pipenv替代requirements.txt
+  - [ ] 添加代码风格检查和自动格式化工具
+  - [ ] 实现API文档自动生成系统
+  - [ ] 设计开发环境一键部署脚本
 
-#### 3.2 提示词模板优化
+- [ ] **监控与日志**
+  - [ ] 实现结构化日志系统，支持日志分析
+  - [ ] 添加性能指标收集和监控
+  - [ ] 设计异常报告和告警机制
 
-当前实现：
-```python
-# 当前的提示词模板
-RAG_PROMPT_TEMPLATE = """参考信息：
-{context}
----
-问题：
-{question}
----
-请根据上述参考信息回答问题。如果参考信息不足以回答问题，请说明无法回答。回答要简洁、准确，并尽可能基于参考信息。
-"""
-```
+### 安全与部署
 
-改进方案：
-```python
-# 引入TinyRAG的提示词模板
-RAG_PROMPT_TEMPLATE = """参考信息：
-{context}
----
-我的问题或指令：
-{question}
----
-我的回答：
-{answer}
----
-请根据上述参考信息回答和我的问题或指令，修正我的回答。前面的参考信息和我的回答可能有用，也可能没用，你需要从我给出的参考信息中选出与我的问题最相关的那些，来为你修正的回答提供依据。回答一定要忠于原文，简洁但不丢信息，不要胡乱编造。我的问题或指令是什么语种，你就用什么语种回复。
-你修正的回答:"""
-```
+- [ ] **安全增强**
+  - [ ] 实现API密钥安全存储和管理
+  - [ ] 添加输入验证和防注入机制
+  - [ ] 支持HTTPS和数据加密
+  - [ ] 实现访问控制和权限管理
 
-改进内容：
-- 引入"我的回答"部分，让LLM对初步回答进行修正
-- 优化指令描述，提高LLM对参考信息的利用效率
-- 增加语言匹配要求，提升多语言支持
+- [ ] **部署优化**
+  - [ ] 提供Docker容器化部署方案
+  - [ ] 支持云服务部署（AWS、Azure、GCP）
+  - [ ] 实现自动扩展和负载均衡配置
+  - [ ] 设计备份和恢复机制
 
-### 4. 性能优化
+### 长期规划
 
-#### 4.1 并行处理
+- [ ] **多语言支持**
+  - [ ] 添加多语言界面
+  - [ ] 优化多语言内容处理
+  - [ ] 支持跨语言检索和问答
 
-当前实现：
-```python
-# 当前的处理方式
-def process_entries(self, entries: List[Entry]):
-    for entry in entries:
-        self.process_entry(entry)
-    # ...
-```
+- [ ] **生态系统扩展**
+  - [ ] 设计插件系统，支持功能扩展
+  - [ ] 提供API接口，支持第三方集成
+  - [ ] 实现移动应用客户端
 
-改进方案：
-```python
-# 引入TinyRAG的并行处理
-def process_entries(self, entries: List[Entry]):
-    with ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
-        futures = {executor.submit(self.process_entry, entry): entry for entry in entries}
-        for future in tqdm(as_completed(futures), total=len(entries)):
-            try:
-                future.result()
-            except Exception as exc:
-                logger.error(f"处理条目时出错: {exc}")
-    # ...
-```
-
-改进内容：
-- 引入多线程并行处理，提高数据处理效率
-- 优化资源利用，自动适应CPU核心数
-- 增加错误处理和进度显示
-
-#### 4.2 缓存优化
-
-当前实现：
-```python
-# 当前的缓存实现
-@lru_cache(maxsize=1000)
-def _get_embedding(self, text: str) -> np.ndarray:
-    return self.embedding_model.encode(text)
-```
-
-改进方案：
-```python
-# 增强的缓存策略
-class EnhancedCache:
-    def __init__(self, cache_size=1000, ttl=3600):
-        self.cache = {}
-        self.cache_size = cache_size
-        self.ttl = ttl
-        self.access_count = {}
-        
-    def get(self, key):
-        if key in self.cache:
-            self.access_count[key] += 1
-            return self.cache[key]
-        return None
-        
-    def set(self, key, value):
-        if len(self.cache) >= self.cache_size:
-            self._evict_least_used()
-        self.cache[key] = value
-        self.access_count[key] = 1
-```
-
-改进内容：
-- 引入更智能的缓存淘汰策略，提高缓存命中率
-- 增加缓存过期时间设置，保证数据新鲜度
-- 优化内存使用，避免缓存过大占用资源
-
-## 开发计划
-
-- [x] 基础RSS解析器实现
-- [x] 数据存储功能
-- [x] 命令行工具
-- [x] RAG系统实现
-  - [x] 文本分块
-  - [x] 向量化处理
-  - [x] 混合检索策略
-  - [x] LLM集成
-  - [x] 流式输出
-- [ ] 实现改进方案
-  - [ ] 智能分句处理
-  - [ ] 多阶段检索策略
-  - [ ] 查询增强
-  - [ ] 缓存优化
-- [ ] Gradio UI开发
-  - [ ] RSS源管理界面
-  - [ ] 条目浏览界面
-  - [ ] 问答界面
-- [ ] 性能优化
-  - [ ] 减少内存占用
-  - [ ] 提高检索速度
-  - [ ] 优化LLM调用
+- [ ] **高级功能**
+  - [ ] 实现知识图谱构建和利用
+  - [ ] 支持定制化训练和微调
+  - [ ] 添加主动学习机制，持续优化模型
 
 ## 贡献
 

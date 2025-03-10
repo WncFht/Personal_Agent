@@ -2,7 +2,7 @@
     "base_dir": "data/rag_db",
     "device": "cuda",
     "llm_type": "deepseek",
-    "deepseek_api_key": "sk-72283ec1e29b4f3bb17f1c9f5c0a8c8a",
+    "deepseek_api_key": "",
     "deepseek_model": "deepseek-chat",
     "deepseek_base_url": "https://api.deepseek.com",
     "embedding_model_id": "models/bge-base-zh-v1.5",

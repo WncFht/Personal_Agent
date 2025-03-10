@@ -280,30 +280,48 @@ class RAGManager(Component):
         
         # 如果没有找到相关内容
         if not search_results:
-            return "抱歉，没有找到相关信息。"
+            return "抱歉，没有找到与您问题相关的信息。请尝试调整问题表述或扩大搜索范围。"
             
         # 构建上下文
         context_texts = []
         for text, score, metadata in search_results:
-            # 添加元数据信息
-            source_info = f"来源: {metadata.get('title', '未知')}"
+            # 格式化日期
+            date_str = "未知日期"
             if 'published_date' in metadata:
                 try:
                     date = datetime.fromisoformat(metadata['published_date']).strftime("%Y-%m-%d")
-                    source_info += f" ({date})"
+                    date_str = date
                 except:
                     pass
+            
+            # 构建更丰富的上下文信息
+            source_info = f"标题: {metadata.get('title', '未知标题')}\n"
+            source_info += f"来源: {metadata.get('feed_title', '未知来源')}\n"
+            source_info += f"日期: {date_str}\n"
+            source_info += f"链接: {metadata.get('link', '#')}\n"
+            source_info += f"相关度: {score:.2f}\n"
                     
             # 添加到上下文
-            context_texts.append(f"{source_info}\n{text}")
+            context_texts.append(f"{source_info}\n内容:\n{text}")
             
-        context = "\n\n".join(context_texts)
+        context = "\n\n---\n\n".join(context_texts)
         
-        # 构建提示词
-        prompt = ORIGINAL_RAG_PROMPT_TEMPLATE.format(
-            context=context,
-            question=query
-        )
+        # 构建更好的提示词
+        prompt = f"""你是一个专业的RSS内容分析助手。请基于以下RSS文章内容，回答用户的问题。
+        
+请注意：
+1. 只使用提供的内容回答问题，不要编造信息
+2. 如果提供的内容不足以回答问题，请明确指出
+3. 回答应该简洁明了，重点突出
+4. 引用信息时请标明来源
+5. 回答应当客观公正，不带个人观点
+
+用户问题: {query}
+
+参考内容:
+{context}
+
+请根据以上参考内容回答用户问题:"""
         
         # 生成回答
         answer = llm_manager.generate(prompt)
@@ -326,14 +344,49 @@ class RAGManager(Component):
         
         logger.info("使用查询增强策略")
         
-        # 先用LLM生成初步回答
-        logger.info("生成初步回答...")
-        initial_answer = llm_manager.generate(query)
-        logger.info(f"初步回答: {initial_answer[:100]}...")
+        # 先用LLM生成初步回答和相关关键词
+        logger.info("生成初步回答和关键词...")
+        initial_prompt = f"""请根据以下问题，生成两部分内容：
+1. 对问题的初步回答
+2. 与问题相关的5-10个关键词或短语，这些关键词将用于检索相关信息
+
+问题: {query}
+
+输出格式:
+初步回答: [你的初步回答]
+关键词: [关键词1], [关键词2], [关键词3], ..."""
+
+        initial_response = llm_manager.generate(initial_prompt)
         
-        # 增强查询
-        enhanced_query = query + " " + initial_answer + " " + query
-        logger.info("使用增强查询进行检索...")
+        # 解析初步回答和关键词
+        initial_answer = ""
+        keywords = []
+        
+        try:
+            # 尝试解析回答和关键词
+            if "初步回答:" in initial_response and "关键词:" in initial_response:
+                parts = initial_response.split("关键词:")
+                initial_answer = parts[0].replace("初步回答:", "").strip()
+                keywords_text = parts[1].strip()
+                keywords = [k.strip() for k in keywords_text.split(",")]
+            else:
+                # 如果格式不匹配，使用整个响应作为初步回答
+                initial_answer = initial_response
+                # 使用简单的文本分析提取可能的关键词
+                words = set(query.split())
+                words.update(initial_answer.split())
+                keywords = list(words)[:10]  # 取前10个词作为关键词
+        except Exception as e:
+            logger.error(f"解析初步回答和关键词失败: {e}")
+            initial_answer = initial_response
+            keywords = query.split()
+        
+        logger.info(f"初步回答: {initial_answer[:100]}...")
+        logger.info(f"提取的关键词: {keywords}")
+        
+        # 构建增强查询
+        enhanced_query = query + " " + " ".join(keywords)
+        logger.info(f"增强查询: {enhanced_query[:100]}...")
         
         # 搜索相关内容
         search_results = retrieval_manager.search(
@@ -345,34 +398,54 @@ class RAGManager(Component):
         
         # 如果没有找到相关内容
         if not search_results:
-            return initial_answer  # 返回初步回答
+            logger.info("未找到相关内容，返回初步回答")
+            return initial_answer + "\n\n(注: 未找到与问题直接相关的RSS内容，以上是基于通用知识的回答)"
             
         # 构建上下文
         context_texts = []
         for text, score, metadata in search_results:
-            # 添加元数据信息
-            source_info = f"来源: {metadata.get('title', '未知')}"
+            # 格式化日期
+            date_str = "未知日期"
             if 'published_date' in metadata:
                 try:
                     date = datetime.fromisoformat(metadata['published_date']).strftime("%Y-%m-%d")
-                    source_info += f" ({date})"
+                    date_str = date
                 except:
                     pass
+            
+            # 构建更丰富的上下文信息
+            source_info = f"标题: {metadata.get('title', '未知标题')}\n"
+            source_info += f"来源: {metadata.get('feed_title', '未知来源')}\n"
+            source_info += f"日期: {date_str}\n"
+            source_info += f"链接: {metadata.get('link', '#')}\n"
+            source_info += f"相关度: {score:.2f}\n"
                     
             # 添加到上下文
-            context_texts.append(f"{source_info}\n{text}")
+            context_texts.append(f"{source_info}\n内容:\n{text}")
             
-        context = "\n\n".join(context_texts)
+        context = "\n\n---\n\n".join(context_texts)
         
-        # 构建增强提示词
-        prompt = ENHANCED_RAG_PROMPT_TEMPLATE.format(
-            context=context,
-            question=query,
-            answer=initial_answer
-        )
+        # 构建最终提示词
+        prompt = f"""你是一个专业的RSS内容分析助手。请基于以下RSS文章内容和初步回答，回答用户的问题。
+
+请注意：
+1. 优先使用提供的RSS内容回答问题，但可以参考初步回答
+2. 如果RSS内容与问题不够相关，请明确指出并依赖初步回答
+3. 回答应该简洁明了，重点突出
+4. 引用信息时请标明来源
+5. 回答应当客观公正，不带个人观点
+
+用户问题: {query}
+
+初步回答: 
+{initial_answer}
+
+参考RSS内容:
+{context}
+
+请根据以上信息提供最终回答:"""
         
         # 生成最终回答
-        logger.info("生成最终回答...")
         final_answer = llm_manager.generate(prompt)
         
         return final_answer
@@ -424,31 +497,49 @@ class RAGManager(Component):
         
         # 如果没有找到相关内容
         if not search_results:
-            yield "抱歉，没有找到相关信息。"
+            yield "抱歉，没有找到与您问题相关的信息。请尝试调整问题表述或扩大搜索范围。"
             return
             
         # 构建上下文
         context_texts = []
         for text, score, metadata in search_results:
-            # 添加元数据信息
-            source_info = f"来源: {metadata.get('title', '未知')}"
+            # 格式化日期
+            date_str = "未知日期"
             if 'published_date' in metadata:
                 try:
                     date = datetime.fromisoformat(metadata['published_date']).strftime("%Y-%m-%d")
-                    source_info += f" ({date})"
+                    date_str = date
                 except:
                     pass
+            
+            # 构建更丰富的上下文信息
+            source_info = f"标题: {metadata.get('title', '未知标题')}\n"
+            source_info += f"来源: {metadata.get('feed_title', '未知来源')}\n"
+            source_info += f"日期: {date_str}\n"
+            source_info += f"链接: {metadata.get('link', '#')}\n"
+            source_info += f"相关度: {score:.2f}\n"
                     
             # 添加到上下文
-            context_texts.append(f"{source_info}\n{text}")
+            context_texts.append(f"{source_info}\n内容:\n{text}")
             
-        context = "\n\n".join(context_texts)
+        context = "\n\n---\n\n".join(context_texts)
         
-        # 构建提示词
-        prompt = ORIGINAL_RAG_PROMPT_TEMPLATE.format(
-            context=context,
-            question=query
-        )
+        # 构建更好的提示词
+        prompt = f"""你是一个专业的RSS内容分析助手。请基于以下RSS文章内容，回答用户的问题。
+        
+请注意：
+1. 只使用提供的内容回答问题，不要编造信息
+2. 如果提供的内容不足以回答问题，请明确指出
+3. 回答应该简洁明了，重点突出
+4. 引用信息时请标明来源
+5. 回答应当客观公正，不带个人观点
+
+用户问题: {query}
+
+参考内容:
+{context}
+
+请根据以上参考内容回答用户问题:"""
         
         # 流式生成回答
         for token in llm_manager.generate_stream(prompt):
@@ -471,14 +562,49 @@ class RAGManager(Component):
         
         logger.info("使用查询增强策略")
         
-        # 先用LLM生成初步回答
-        logger.info("生成初步回答...")
-        initial_answer = llm_manager.generate(query)
-        logger.info(f"初步回答: {initial_answer[:100]}...")
+        # 先用LLM生成初步回答和相关关键词
+        logger.info("生成初步回答和关键词...")
+        initial_prompt = f"""请根据以下问题，生成两部分内容：
+1. 对问题的初步回答
+2. 与问题相关的5-10个关键词或短语，这些关键词将用于检索相关信息
+
+问题: {query}
+
+输出格式:
+初步回答: [你的初步回答]
+关键词: [关键词1], [关键词2], [关键词3], ..."""
+
+        initial_response = llm_manager.generate(initial_prompt)
         
-        # 增强查询
-        enhanced_query = query + " " + initial_answer + " " + query
-        logger.info("使用增强查询进行检索...")
+        # 解析初步回答和关键词
+        initial_answer = ""
+        keywords = []
+        
+        try:
+            # 尝试解析回答和关键词
+            if "初步回答:" in initial_response and "关键词:" in initial_response:
+                parts = initial_response.split("关键词:")
+                initial_answer = parts[0].replace("初步回答:", "").strip()
+                keywords_text = parts[1].strip()
+                keywords = [k.strip() for k in keywords_text.split(",")]
+            else:
+                # 如果格式不匹配，使用整个响应作为初步回答
+                initial_answer = initial_response
+                # 使用简单的文本分析提取可能的关键词
+                words = set(query.split())
+                words.update(initial_answer.split())
+                keywords = list(words)[:10]  # 取前10个词作为关键词
+        except Exception as e:
+            logger.error(f"解析初步回答和关键词失败: {e}")
+            initial_answer = initial_response
+            keywords = query.split()
+        
+        logger.info(f"初步回答: {initial_answer[:100]}...")
+        logger.info(f"提取的关键词: {keywords}")
+        
+        # 构建增强查询
+        enhanced_query = query + " " + " ".join(keywords)
+        logger.info(f"增强查询: {enhanced_query[:100]}...")
         
         # 搜索相关内容
         search_results = retrieval_manager.search(
@@ -490,35 +616,55 @@ class RAGManager(Component):
         
         # 如果没有找到相关内容
         if not search_results:
-            yield initial_answer  # 返回初步回答
+            logger.info("未找到相关内容，返回初步回答")
+            yield initial_answer + "\n\n(注: 未找到与问题直接相关的RSS内容，以上是基于通用知识的回答)"
             return
             
         # 构建上下文
         context_texts = []
         for text, score, metadata in search_results:
-            # 添加元数据信息
-            source_info = f"来源: {metadata.get('title', '未知')}"
+            # 格式化日期
+            date_str = "未知日期"
             if 'published_date' in metadata:
                 try:
                     date = datetime.fromisoformat(metadata['published_date']).strftime("%Y-%m-%d")
-                    source_info += f" ({date})"
+                    date_str = date
                 except:
                     pass
+            
+            # 构建更丰富的上下文信息
+            source_info = f"标题: {metadata.get('title', '未知标题')}\n"
+            source_info += f"来源: {metadata.get('feed_title', '未知来源')}\n"
+            source_info += f"日期: {date_str}\n"
+            source_info += f"链接: {metadata.get('link', '#')}\n"
+            source_info += f"相关度: {score:.2f}\n"
                     
             # 添加到上下文
-            context_texts.append(f"{source_info}\n{text}")
+            context_texts.append(f"{source_info}\n内容:\n{text}")
             
-        context = "\n\n".join(context_texts)
+        context = "\n\n---\n\n".join(context_texts)
         
-        # 构建增强提示词
-        prompt = ENHANCED_RAG_PROMPT_TEMPLATE.format(
-            context=context,
-            question=query,
-            answer=initial_answer
-        )
+        # 构建最终提示词
+        prompt = f"""你是一个专业的RSS内容分析助手。请基于以下RSS文章内容和初步回答，回答用户的问题。
+
+请注意：
+1. 优先使用提供的RSS内容回答问题，但可以参考初步回答
+2. 如果RSS内容与问题不够相关，请明确指出并依赖初步回答
+3. 回答应该简洁明了，重点突出
+4. 引用信息时请标明来源
+5. 回答应当客观公正，不带个人观点
+
+用户问题: {query}
+
+初步回答: 
+{initial_answer}
+
+参考RSS内容:
+{context}
+
+请根据以上信息提供最终回答:"""
         
         # 流式生成最终回答
-        logger.info("生成最终回答...")
         for token in llm_manager.generate_stream(prompt):
             yield token
     

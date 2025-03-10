@@ -13,6 +13,13 @@ from typing import Dict, List, Optional, Tuple
 import matplotlib.pyplot as plt
 from loguru import logger
 
+# 设置matplotlib中文字体支持
+try:
+    plt.rcParams['font.sans-serif'] = ['SimHei', 'Arial Unicode MS', 'DejaVu Sans', 'sans-serif']
+    plt.rcParams['axes.unicode_minus'] = False  # 解决负号显示问题
+except Exception as e:
+    print(f"设置matplotlib中文字体失败: {e}")
+
 # 添加项目根目录到Python路径
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
@@ -21,59 +28,32 @@ from src.rss.parser import RSSParser
 from src.rss.opml_parser import OPMLParser
 from src.rag.config import RAGConfig
 from src.rag.rss_rag import RSSRAG
-
-# 默认配置
-DEFAULT_CONFIG = {
-    "base_dir": "data/rag_db",
-    "device": "cuda" if os.environ.get("CUDA_VISIBLE_DEVICES") is not None else "cpu",
-    "llm_type": "tiny",
-    "llm_model_id": "models/tiny_llm_sft_92m",
-    "embedding_model_id": "models/bge-base-zh-v1.5",
-    "system_prompt": "你是一个有用的AI助手，擅长回答关于科技和人工智能的问题。",
-    "chunk_size": 800,
-    "chunk_overlap": 100,
-    "top_k": 5,
-    "use_reranker": True,
-    "use_query_enhancement": True
-}
+from src.rag.core.config_manager import ConfigManager
 
 # 全局变量
 db_path = "data/rss.db"
-config_path = "config/app_config.json"
+config_manager = None
 rag_system = None
 storage = None
 
-def load_config() -> Dict:
-    """加载配置"""
-    if os.path.exists(config_path):
-        try:
-            with open(config_path, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except Exception as e:
-            logger.error(f"加载配置文件失败: {e}")
-    return DEFAULT_CONFIG
-
-def save_config(config: Dict):
-    """保存配置"""
-    os.makedirs(os.path.dirname(config_path), exist_ok=True)
-    with open(config_path, 'w', encoding='utf-8') as f:
-        json.dump(config, f, ensure_ascii=False, indent=2)
-
-def init_system(config: Dict = None):
+def init_system():
     """初始化系统"""
-    global rag_system, storage
+    global rag_system, storage, config_manager
     
-    if config is None:
-        config = load_config()
-    
-    # 创建RAG配置
-    rag_config = RAGConfig(**config)
+    # 初始化配置管理器
+    config_manager = ConfigManager(
+        config_path="config/app_config.json",
+        user_config_path="config/user_config.json",
+        auto_reload=True
+    )
+    # 确保初始化配置管理器
+    config_manager.initialize()
     
     # 初始化存储
     storage = RSSStorage(db_path)
     
     # 初始化RAG系统
-    rag_system = RSSRAG(rag_config)
+    rag_system = RSSRAG(config_manager=config_manager)
     
     # 加载状态
     try:
@@ -85,7 +65,7 @@ def init_system(config: Dict = None):
         rag_system.load_from_rss_db(db_path, incremental=False)
         rag_system.save_state()
 
-def answer_question(question: str, feed_id: Optional[int] = None, days: Optional[int] = None, 
+def answer_question(question: str, feed_title: str, days: Optional[int] = None, 
                    show_references: bool = True, stream: bool = True) -> str:
     """回答问题"""
     global rag_system
@@ -99,10 +79,18 @@ def answer_question(question: str, feed_id: Optional[int] = None, days: Optional
         start_date = datetime.now() - timedelta(days=int(days))
         date_range = (start_date, datetime.now())
     
-    # 获取feed_id
-    feed_id_int = None
-    if feed_id and feed_id.isdigit():
-        feed_id_int = int(feed_id)
+    # 获取所有RSS源
+    feed_choices = get_feeds()
+    
+    # 根据标题查找对应的feed_id
+    feed_id = ""
+    for id, title in feed_choices:
+        if title == feed_title:
+            feed_id = id
+            break
+    
+    # 如果feed_id为空字符串，表示选择了"全部"
+    feed_id_int = int(feed_id) if feed_id else None
     
     # 获取检索结果
     search_results = rag_system.search(
@@ -116,15 +104,15 @@ def answer_question(question: str, feed_id: Optional[int] = None, days: Optional
     if show_references and search_results:
         references = "### 参考信息:\n\n"
         for i, result in enumerate(search_results):
-            doc, score = result
-            metadata = doc.metadata
+            # 解包搜索结果元组
+            text, score, metadata = result
             title = metadata.get('title', '未知标题')
             source = metadata.get('feed_title', '未知来源')
             date = metadata.get('published_date', '未知日期')
             link = metadata.get('link', '#')
             
             references += f"**{i+1}. [{title}]({link})** (来源: {source}, 日期: {date})\n\n"
-            references += f"{doc.page_content[:200]}...\n\n"
+            references += f"{text[:200]}...\n\n"
     
     # 生成回答
     if stream:
@@ -145,13 +133,18 @@ def answer_question(question: str, feed_id: Optional[int] = None, days: Optional
         return answer + (f"\n\n{references}" if show_references else "")
 
 def get_feeds() -> List[Tuple[str, str]]:
-    """获取所有RSS源"""
+    """获取所有RSS源
+    
+    Returns:
+        List[Tuple[str, str]]: RSS源列表，每个元素为 (id, title)
+    """
     global storage
     
     if storage is None:
         storage = RSSStorage(db_path)
     
     feeds = storage.get_feeds()
+    # 确保第一个选项是"全部"，ID为空字符串
     return [("", "全部")] + [(str(feed.id), feed.title) for feed in feeds]
 
 def add_rss_feed(url: str, category: str = "") -> str:
@@ -250,34 +243,78 @@ def import_opml_file(file_obj) -> str:
     
     return f"导入完成:\n- 添加了 {added_count} 个RSS源\n- 跳过了 {skipped_count} 个已存在的源\n- 失败了 {error_count} 个源\n- 总计添加了 {total_entries} 个条目"
 
-def delete_feed(feed_id: str) -> str:
+def delete_feed(selected_rows) -> str:
     """删除RSS源"""
     global storage, rag_system
     
     if storage is None:
         storage = RSSStorage(db_path)
     
-    if not feed_id or not feed_id.isdigit():
+    # 检查是否有选中的行
+    if not selected_rows or len(selected_rows) == 0:
         return "请选择要删除的RSS源"
     
-    feed_id_int = int(feed_id)
+    # 获取选中行的第一列（ID）
+    try:
+        feed_id = selected_rows[0][0]  # 获取第一个选中行的ID
+        feed_title = selected_rows[0][1]  # 获取第一个选中行的标题
+        
+        # 如果ID为空或者标题是"全部"，不执行删除操作
+        if not feed_id or feed_title == "全部":
+            return "无法删除此RSS源"
+        
+        # 删除RSS源
+        success = storage.delete_feed(int(feed_id))
+        if not success:
+            return f"错误: 删除RSS源失败 {feed_title}"
+        
+        # 如果RAG系统已初始化，重新加载数据
+        if rag_system:
+            rag_system.load_from_rss_db(db_path, incremental=True)
+        
+        return f"成功删除RSS源: {feed_title}"
+    except Exception as e:
+        logger.error(f"删除RSS源失败: {e}")
+        return f"删除RSS源时发生错误: {str(e)}"
+
+def get_feed_list(category_filter="全部", search_term=""):
+    """获取RSS源列表，支持分类筛选和搜索"""
+    global storage
     
-    # 获取源信息
-    feed = storage.get_feed(feed_id_int)
-    if not feed:
-        return f"错误: 未找到ID为 {feed_id} 的RSS源"
+    if storage is None:
+        storage = RSSStorage(db_path)
     
-    # 删除源
-    success = storage.delete_feed(feed_id_int)
-    if not success:
-        return f"错误: 删除RSS源失败 {feed.title}"
+    feeds = storage.get_feeds()
     
-    # 重新构建RAG索引
-    if rag_system is not None:
-        rag_system.load_from_rss_db(db_path, incremental=False)
-        rag_system.save_state()
+    # 构建数据
+    feed_data = []
+    for feed in feeds:
+        # 如果有分类筛选且不匹配，则跳过
+        if category_filter != "全部":
+            feed_category = feed.category.split(" - ")[0] if " - " in feed.category else "未分类"
+            if feed_category != category_filter:
+                continue
+        
+        # 如果有搜索词且不匹配，则跳过
+        if search_term and search_term.lower() not in feed.title.lower() and search_term.lower() not in (feed.category or "").lower():
+            continue
+        
+        # 格式化最后更新时间
+        last_updated = feed.last_updated.strftime("%Y-%m-%d %H:%M") if feed.last_updated else "未更新"
+        
+        feed_data.append([
+            str(feed.id),
+            feed.title,
+            feed.category or "未分类",
+            last_updated
+        ])
     
-    return f"成功删除RSS源: {feed.title}"
+    return feed_data
+
+def update_feed_list(category_filter, search_term):
+    """更新RSS源列表"""
+    feed_data = get_feed_list(category_filter, search_term)
+    return feed_data
 
 def update_feeds() -> str:
     """更新所有RSS源"""
@@ -337,47 +374,232 @@ def get_feed_stats():
     # 收集数据
     feed_data = []
     for feed in feeds:
-        entry_count = storage.get_entry_count(feed_id=feed.id)
-        feed_data.append({
-            "id": feed.id,
-            "title": feed.title,
-            "category": feed.category or "未分类",
-            "entries": entry_count,
-            "last_updated": feed.last_updated
-        })
+        try:
+            entry_count = storage.get_entry_count(feed_id=feed.id)
+            unread_count = storage.get_unread_count(feed_id=feed.id)
+            
+            # 提取主分类（如果有分类层级）
+            main_category = feed.category.split(" - ")[0] if feed.category and " - " in feed.category else (feed.category or "未分类")
+            
+            feed_data.append({
+                "id": feed.id,
+                "title": feed.title,
+                "category": main_category,
+                "entries": entry_count,
+                "unread": unread_count,
+                "last_updated": feed.last_updated.strftime("%Y-%m-%d %H:%M") if feed.last_updated else "未更新"
+            })
+        except Exception as e:
+            logger.error(f"获取源统计信息失败: {feed.title} - {e}")
     
     # 创建DataFrame
     df = pd.DataFrame(feed_data)
     
-    # 创建图表
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
+    if len(df) == 0:
+        return "无法获取RSS源统计信息", None
     
-    # 按分类统计
-    category_counts = df.groupby('category')['entries'].sum()
-    category_counts.plot.pie(ax=ax1, autopct='%1.1f%%', title='按分类统计条目数')
-    
-    # 按源统计
-    top_feeds = df.sort_values('entries', ascending=False).head(10)
-    top_feeds.plot.bar(x='title', y='entries', ax=ax2, title='条目数最多的10个源')
-    
-    plt.tight_layout()
-    
-    # 生成表格HTML
-    df_html = df.to_html(index=False)
-    
-    return df_html, fig
+    try:
+        # 创建图表
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6), dpi=100)
+        
+        # 按分类统计
+        category_counts = df.groupby('category')['entries'].sum().sort_values(ascending=False)
+        
+        # 创建英文分类映射
+        category_mapping = {}
+        for i, cat in enumerate(category_counts.index):
+            category_mapping[cat] = f"Category {i+1}"
+        
+        # 如果分类太多，只显示前5个，其他归为"其他"
+        if len(category_counts) > 5:
+            other_sum = category_counts[5:].sum()
+            category_counts = category_counts[:5]
+            category_counts['Other'] = other_sum
+            category_mapping['Other'] = 'Other'
+        
+        # 使用饼图显示分类统计
+        wedges, texts, autotexts = ax1.pie(
+            category_counts, 
+            labels=[category_mapping.get(cat, cat) for cat in category_counts.index],
+            autopct='%1.1f%%', 
+            startangle=90,
+            textprops={'fontsize': 9}
+        )
+        ax1.set_title('Entries by Category')
+        
+        # 添加图例，显示分类映射
+        legend_labels = [f"{category_mapping[cat]} = {cat}" for cat in category_counts.index if cat in category_mapping]
+        if legend_labels:
+            ax1.legend(legend_labels, loc='lower center', bbox_to_anchor=(0.5, -0.2), fontsize=8, ncol=2)
+        
+        # 按源统计
+        top_feeds = df.sort_values('entries', ascending=False).head(8)
+        
+        # 创建英文标题映射
+        title_mapping = {}
+        for i, title in enumerate(top_feeds['title']):
+            title_mapping[title] = f"Source {i+1}"
+        
+        # 使用水平条形图，避免标题重叠
+        bars = ax2.barh(
+            y=range(len(top_feeds)), 
+            width=top_feeds['entries'],
+            height=0.6
+        )
+        
+        # 设置Y轴标签为英文标识
+        ax2.set_yticks(range(len(top_feeds)))
+        ax2.set_yticklabels([title_mapping.get(title, title) for title in top_feeds['title']], fontsize=8)
+        
+        # 在条形图上显示数值
+        for i, bar in enumerate(bars):
+            ax2.text(
+                bar.get_width() + 5, 
+                bar.get_y() + bar.get_height()/2, 
+                str(top_feeds['entries'].iloc[i]),
+                va='center'
+            )
+        
+        ax2.set_title('Top Sources by Entry Count')
+        ax2.set_xlabel('Number of Entries')
+        
+        # 添加图例，显示标题映射
+        legend_labels = [f"{title_mapping[title]} = {title}" for title in top_feeds['title'] if title in title_mapping]
+        if legend_labels:
+            ax2.legend(legend_labels, loc='lower center', bbox_to_anchor=(0.5, -0.3), fontsize=8, ncol=2)
+        
+        plt.tight_layout()
+        
+        # 生成表格HTML
+        # 格式化DataFrame以便更好地显示
+        display_df = df.copy()
+        display_df = display_df[['title', 'category', 'entries', 'unread', 'last_updated']]
+        display_df.columns = ['RSS源', '分类', '条目数', '未读数', '最后更新']
+        
+        # 按条目数排序
+        display_df = display_df.sort_values('条目数', ascending=False)
+        
+        df_html = display_df.to_html(index=False, classes='table table-striped table-hover')
+        
+        # 添加Bootstrap样式
+        df_html = f"""
+        <style>
+        .table {{
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 1rem;
+        }}
+        .table-striped tbody tr:nth-of-type(odd) {{
+            background-color: rgba(0,0,0,.05);
+        }}
+        .table-hover tbody tr:hover {{
+            background-color: rgba(0,0,0,.075);
+        }}
+        .table th, .table td {{
+            padding: 0.75rem;
+            border-top: 1px solid #dee2e6;
+        }}
+        </style>
+        {df_html}
+        """
+        
+        return df_html, fig
+    except Exception as e:
+        logger.error(f"生成统计图表失败: {e}")
+        # 如果图表生成失败，至少返回表格数据
+        display_df = df.copy()
+        display_df = display_df[['title', 'category', 'entries', 'unread', 'last_updated']]
+        display_df.columns = ['RSS源', '分类', '条目数', '未读数', '最后更新']
+        df_html = display_df.to_html(index=False)
+        return f"图表生成失败: {e}<br/>{df_html}", None
 
-def update_system_config(config_dict):
-    """更新系统配置"""
-    global rag_system
+def update_system_config(
+    device, base_dir, llm_type, llm_model, system_prompt,
+    openai_api_key, deepseek_api_key, embedding_model,
+    chunk_size, chunk_overlap, top_k, use_reranker,
+    use_query_enhancement, use_cache
+) -> str:
+    """更新系统配置
     
-    # 保存配置
-    save_config(config_dict)
+    Args:
+        device: 设备类型
+        base_dir: 数据目录
+        llm_type: LLM类型
+        llm_model: LLM模型
+        system_prompt: 系统提示词
+        openai_api_key: OpenAI API密钥
+        deepseek_api_key: DeepSeek API密钥
+        embedding_model: Embedding模型
+        chunk_size: 分块大小
+        chunk_overlap: 分块重叠
+        top_k: 检索结果数量
+        use_reranker: 是否使用重排序
+        use_query_enhancement: 是否使用查询增强
+        use_cache: 是否使用缓存
+        
+    Returns:
+        str: 更新结果
+    """
+    global rag_system, config_manager
     
-    # 重新初始化系统
-    init_system(config_dict)
+    if rag_system is None or config_manager is None:
+        init_system()
     
-    return "配置已更新，系统已重新初始化"
+    try:
+        # 构建配置更新字典
+        config_updates = {
+            "device": device,
+            "base_dir": base_dir,
+            "llm_type": llm_type,
+            "llm_model_id": llm_model,
+            "system_prompt": system_prompt,
+            "openai_api_key": openai_api_key,
+            "deepseek_api_key": deepseek_api_key,
+            "embedding_model_id": embedding_model,
+            "chunk_size": int(chunk_size),
+            "chunk_overlap": int(chunk_overlap),
+            "top_k": int(top_k),
+            "use_reranker": use_reranker,
+            "use_query_enhancement": use_query_enhancement,
+            "use_cache": use_cache
+        }
+        
+        # 更新配置
+        success = rag_system.update_config(config_updates, save_to_user_config=True)
+        
+        if success:
+            return "配置已更新"
+        else:
+            return "配置更新失败，请检查配置值是否有效"
+    except Exception as e:
+        logger.error(f"更新配置失败: {e}")
+        return f"更新配置失败: {str(e)}"
+
+def get_current_config() -> Dict:
+    """获取当前配置
+    
+    Returns:
+        Dict: 当前配置
+    """
+    global config_manager
+    
+    if config_manager is None:
+        init_system()
+    
+    return config_manager.get_config()
+
+def get_config_schema() -> Dict:
+    """获取配置模式信息
+    
+    Returns:
+        Dict: 配置模式信息
+    """
+    global config_manager
+    
+    if config_manager is None:
+        init_system()
+    
+    return config_manager.get_config_schema()
 
 def create_ui():
     """创建Gradio界面"""
@@ -392,7 +614,14 @@ def create_ui():
                         question_input = gr.Textbox(label="问题", placeholder="请输入您的问题...", lines=3)
                         
                         with gr.Row():
-                            feed_dropdown = gr.Dropdown(choices=get_feeds(), label="RSS源", value="")
+                            # 获取所有RSS源
+                            feed_choices = get_feeds()
+                            # 设置默认值为第一个选项（"全部"）
+                            feed_dropdown = gr.Dropdown(
+                                choices=[title for _, title in feed_choices], 
+                                label="RSS源", 
+                                value="全部"
+                            )
                             days_input = gr.Number(label="时间范围（天）", value=30)
                         
                         with gr.Row():
@@ -406,212 +635,278 @@ def create_ui():
             
             # RSS源管理标签页
             with gr.TabItem("RSS源管理"):
-                with gr.Tabs() as rss_tabs:
-                    # 添加RSS源
-                    with gr.TabItem("添加RSS源"):
-                        with gr.Row():
-                            url_input = gr.Textbox(label="RSS源URL", placeholder="https://example.com/feed.xml")
-                            category_input = gr.Textbox(label="分类", placeholder="科技、新闻等")
+                with gr.Row():
+                    with gr.Column(scale=1):
+                        gr.Markdown("## RSS源操作")
+                        with gr.Tabs() as rss_tabs:
+                            # 添加RSS源
+                            with gr.TabItem("添加RSS源"):
+                                with gr.Row():
+                                    url_input = gr.Textbox(label="RSS源URL", placeholder="https://example.com/feed.xml")
+                                
+                                with gr.Row():
+                                    category_input = gr.Textbox(label="分类", placeholder="科技、新闻等")
+                                
+                                with gr.Row():
+                                    add_button = gr.Button("添加", variant="primary")
+                            
+                            # 导入OPML
+                            with gr.TabItem("导入OPML"):
+                                with gr.Row():
+                                    opml_file = gr.File(label="OPML文件", file_types=[".opml", ".xml"])
+                                
+                                with gr.Row():
+                                    import_button = gr.Button("导入", variant="primary")
                         
-                        add_button = gr.Button("添加", variant="primary")
-                        add_result = gr.Textbox(label="结果")
-                    
-                    # 导入OPML
-                    with gr.TabItem("导入OPML"):
-                        opml_file = gr.File(label="OPML文件")
-                        import_button = gr.Button("导入", variant="primary")
-                        import_result = gr.Textbox(label="结果")
-                    
-                    # 管理RSS源
-                    with gr.TabItem("管理RSS源"):
+                        gr.Markdown("## 批量操作")
                         with gr.Row():
-                            manage_feed_dropdown = gr.Dropdown(choices=get_feeds(), label="选择RSS源", value="")
-                            delete_button = gr.Button("删除", variant="stop")
+                            update_button = gr.Button("更新所有RSS源", variant="secondary")
                         
-                        update_button = gr.Button("更新所有RSS源", variant="secondary")
-                        manage_result = gr.Textbox(label="结果")
+                        with gr.Row():
+                            stats_button = gr.Button("生成统计", variant="secondary")
+                        
+                        with gr.Row():
+                            add_result = gr.Textbox(label="操作结果", lines=5)
                     
-                    # RSS源统计
-                    with gr.TabItem("RSS源统计"):
-                        stats_button = gr.Button("生成统计", variant="secondary")
+                    with gr.Column(scale=2):
+                        gr.Markdown("## RSS源列表")
+                        
+                        # 获取所有RSS源
+                        feed_choices = get_feeds()
+                        
+                        # 分类过滤
+                        with gr.Row():
+                            categories = list(set([feed[1].split(" - ")[0] if " - " in feed[1] else "未分类" for feed in feed_choices[1:]]))
+                            categories = ["全部"] + sorted(categories)
+                            category_filter = gr.Dropdown(
+                                choices=categories,
+                                label="按分类筛选",
+                                value="全部"
+                            )
+                            
+                            search_input = gr.Textbox(
+                                label="搜索RSS源",
+                                placeholder="输入关键词搜索...",
+                                show_label=False
+                            )
+                        
+                        # RSS源列表
+                        with gr.Row():
+                            feed_list = gr.Dataframe(
+                                headers=["ID", "标题", "分类", "最后更新"],
+                                datatype=["str", "str", "str", "str"],
+                                col_count=(4, "fixed"),
+                                label="RSS源列表",
+                                interactive=False,
+                                wrap=True
+                            )
+                        
+                        # 操作按钮
+                        with gr.Row():
+                            refresh_list_button = gr.Button("刷新列表", variant="secondary")
+                            delete_button = gr.Button("删除选中的源", variant="stop")
+                        
+                        # 选中的源详情
+                        with gr.Row():
+                            feed_detail = gr.JSON(label="源详情", visible=False)
+                            manage_result = gr.Textbox(label="操作结果", lines=3)
+                
+                # RSS源统计
+                with gr.Row(visible=False) as stats_row:
+                    with gr.Column(scale=1):
                         stats_table = gr.HTML(label="RSS源统计表")
+                    
+                    with gr.Column(scale=1):
                         stats_plot = gr.Plot(label="统计图表")
             
             # 系统配置标签页
             with gr.TabItem("系统配置"):
-                config_dict = load_config()
+                # 获取当前配置和配置模式
+                current_config = get_current_config()
+                config_schema = get_config_schema()
                 
                 with gr.Row():
                     with gr.Column():
-                        gr.Markdown("### 基础配置")
-                        device_dropdown = gr.Dropdown(
-                            choices=["cuda", "cpu"], 
-                            label="设备", 
-                            value=config_dict.get("device", "cuda")
+                        gr.Markdown("## 基础配置")
+                        device = gr.Dropdown(
+                            choices=["cpu", "cuda"], 
+                            value=current_config.get("device", "cpu"),
+                            label="设备"
                         )
-                        base_dir_input = gr.Textbox(
-                            label="数据目录", 
-                            value=config_dict.get("base_dir", "data/rag_db")
+                        base_dir = gr.Textbox(
+                            value=current_config.get("base_dir", "data/rag_db"),
+                            label="数据目录"
                         )
-                    
-                    with gr.Column():
-                        gr.Markdown("### LLM配置")
-                        llm_type_dropdown = gr.Dropdown(
+                        
+                        gr.Markdown("## LLM配置")
+                        llm_type = gr.Dropdown(
                             choices=["tiny", "openai", "huggingface", "deepseek"], 
-                            label="LLM类型", 
-                            value=config_dict.get("llm_type", "tiny")
+                            value=current_config.get("llm_type", "tiny"),
+                            label="LLM类型"
                         )
-                        llm_model_input = gr.Textbox(
-                            label="模型路径/名称", 
-                            value=config_dict.get("llm_model_id", "models/tiny_llm_sft_92m")
+                        llm_model = gr.Textbox(
+                            value=current_config.get("llm_model_id", "models/tiny_llm_sft_92m"),
+                            label="LLM模型"
                         )
-                        system_prompt_input = gr.Textbox(
-                            label="系统提示词", 
-                            value=config_dict.get("system_prompt", "你是一个有用的AI助手。"),
+                        system_prompt = gr.Textbox(
+                            value=current_config.get("system_prompt", "你是一个有用的AI助手。"),
+                            label="系统提示词",
                             lines=3
                         )
-                
-                with gr.Row():
-                    with gr.Column():
-                        gr.Markdown("### API配置（如果使用API模型）")
-                        openai_api_key_input = gr.Textbox(
-                            label="OpenAI API密钥", 
-                            value=config_dict.get("openai_api_key", ""),
+                        
+                        gr.Markdown("## API密钥")
+                        openai_api_key = gr.Textbox(
+                            value=current_config.get("openai_api_key", ""),
+                            label="OpenAI API密钥",
                             type="password"
                         )
-                        deepseek_api_key_input = gr.Textbox(
-                            label="DeepSeek API密钥", 
-                            value=config_dict.get("deepseek_api_key", ""),
+                        deepseek_api_key = gr.Textbox(
+                            value=current_config.get("deepseek_api_key", ""),
+                            label="DeepSeek API密钥",
                             type="password"
                         )
                     
                     with gr.Column():
-                        gr.Markdown("### RAG配置")
-                        embedding_model_input = gr.Textbox(
-                            label="Embedding模型路径", 
-                            value=config_dict.get("embedding_model_id", "models/bge-base-zh-v1.5")
+                        gr.Markdown("## 模型配置")
+                        embedding_model = gr.Textbox(
+                            value=current_config.get("embedding_model_id", "models/bge-base-zh-v1.5"),
+                            label="Embedding模型"
                         )
-                        chunk_size_input = gr.Number(
-                            label="分块大小", 
-                            value=config_dict.get("chunk_size", 800)
+                        
+                        gr.Markdown("## 文本分割配置")
+                        chunk_size = gr.Slider(
+                            minimum=50, maximum=2000, step=50,
+                            value=current_config.get("chunk_size", 500),
+                            label="分块大小"
                         )
-                        chunk_overlap_input = gr.Number(
-                            label="分块重叠", 
-                            value=config_dict.get("chunk_overlap", 100)
+                        chunk_overlap = gr.Slider(
+                            minimum=0, maximum=500, step=10,
+                            value=current_config.get("chunk_overlap", 50),
+                            label="分块重叠"
                         )
-                        top_k_input = gr.Number(
-                            label="检索结果数量", 
-                            value=config_dict.get("top_k", 5)
+                        
+                        gr.Markdown("## 检索配置")
+                        top_k = gr.Slider(
+                            minimum=1, maximum=20, step=1,
+                            value=current_config.get("top_k", 3),
+                            label="检索结果数量"
+                        )
+                        use_reranker = gr.Checkbox(
+                            value=current_config.get("use_reranker", True),
+                            label="使用重排序"
+                        )
+                        use_query_enhancement = gr.Checkbox(
+                            value=current_config.get("use_query_enhancement", False),
+                            label="使用查询增强"
+                        )
+                        
+                        gr.Markdown("## 缓存配置")
+                        use_cache = gr.Checkbox(
+                            value=current_config.get("use_cache", True),
+                            label="使用缓存"
                         )
                 
                 with gr.Row():
                     with gr.Column():
-                        gr.Markdown("### 高级选项")
-                        use_reranker_checkbox = gr.Checkbox(
-                            label="使用重排序", 
-                            value=config_dict.get("use_reranker", True)
-                        )
-                        use_query_enhancement_checkbox = gr.Checkbox(
-                            label="使用查询增强", 
-                            value=config_dict.get("use_query_enhancement", True)
-                        )
-                        use_cache_checkbox = gr.Checkbox(
-                            label="使用缓存", 
-                            value=config_dict.get("use_cache", True)
-                        )
+                        save_config_btn = gr.Button("保存配置", variant="primary")
+                        reset_config_btn = gr.Button("重置为默认配置", variant="secondary")
+                    
+                    with gr.Column():
+                        config_status = gr.Textbox(label="状态", interactive=False)
+            
+            # 设置事件处理
+            # 问答功能
+            ask_button.click(
+                fn=answer_question,
+                inputs=[question_input, feed_dropdown, days_input, show_refs_checkbox, stream_checkbox],
+                outputs=answer_output
+            )
+            
+            # RSS源管理
+            add_button.click(
+                fn=add_rss_feed,
+                inputs=[url_input, category_input],
+                outputs=add_result
+            )
+            
+            import_button.click(
+                fn=import_opml_file,
+                inputs=opml_file,
+                outputs=add_result
+            )
+            
+            delete_button.click(
+                fn=delete_feed,
+                inputs=feed_list,  # 这里需要修改delete_feed函数以接受dataframe选择
+                outputs=manage_result
+            )
+            
+            update_button.click(
+                fn=update_feeds,
+                inputs=[],
+                outputs=add_result
+            )
+            
+            stats_button.click(
+                fn=show_feed_stats,
+                inputs=[],
+                outputs=[stats_row, stats_table, stats_plot]
+            )
+            
+            # 系统配置
+            save_config_btn.click(
+                fn=update_system_config,
+                inputs=[
+                    device, base_dir, llm_type, llm_model, system_prompt,
+                    openai_api_key, deepseek_api_key, embedding_model,
+                    chunk_size, chunk_overlap, top_k, use_reranker,
+                    use_query_enhancement, use_cache
+                ],
+                outputs=config_status
+            )
+            
+            # 重置配置按钮事件
+            def reset_config():
+                global config_manager
+                if config_manager is None:
+                    init_system()
                 
-                save_config_button = gr.Button("保存配置", variant="primary")
-                config_result = gr.Textbox(label="结果")
-        
-        # 设置事件处理
-        # 问答功能
-        ask_button.click(
-            fn=answer_question,
-            inputs=[question_input, feed_dropdown, days_input, show_refs_checkbox, stream_checkbox],
-            outputs=answer_output
-        )
-        
-        # RSS源管理
-        add_button.click(
-            fn=add_rss_feed,
-            inputs=[url_input, category_input],
-            outputs=add_result
-        )
-        
-        import_button.click(
-            fn=import_opml_file,
-            inputs=opml_file,
-            outputs=import_result
-        )
-        
-        delete_button.click(
-            fn=delete_feed,
-            inputs=manage_feed_dropdown,
-            outputs=manage_result
-        )
-        
-        update_button.click(
-            fn=update_feeds,
-            inputs=[],
-            outputs=manage_result
-        )
-        
-        stats_button.click(
-            fn=get_feed_stats,
-            inputs=[],
-            outputs=[stats_table, stats_plot]
-        )
-        
-        # 系统配置
-        def save_config_fn(device, base_dir, llm_type, llm_model, system_prompt,
-                         openai_api_key, deepseek_api_key, embedding_model,
-                         chunk_size, chunk_overlap, top_k,
-                         use_reranker, use_query_enhancement, use_cache):
-            config = {
-                "device": device,
-                "base_dir": base_dir,
-                "llm_type": llm_type,
-                "llm_model_id": llm_model,
-                "system_prompt": system_prompt,
-                "openai_api_key": openai_api_key,
-                "deepseek_api_key": deepseek_api_key,
-                "embedding_model_id": embedding_model,
-                "chunk_size": int(chunk_size),
-                "chunk_overlap": int(chunk_overlap),
-                "top_k": int(top_k),
-                "use_reranker": use_reranker,
-                "use_query_enhancement": use_query_enhancement,
-                "use_cache": use_cache
-            }
-            return update_system_config(config)
-        
-        save_config_button.click(
-            fn=save_config_fn,
-            inputs=[
-                device_dropdown, base_dir_input, llm_type_dropdown, llm_model_input, system_prompt_input,
-                openai_api_key_input, deepseek_api_key_input, embedding_model_input,
-                chunk_size_input, chunk_overlap_input, top_k_input,
-                use_reranker_checkbox, use_query_enhancement_checkbox, use_cache_checkbox
-            ],
-            outputs=config_result
-        )
-        
-        # 标签页切换事件
-        rss_tabs.select(
-            fn=lambda: gr.update(choices=get_feeds()),
-            inputs=[],
-            outputs=manage_feed_dropdown
-        )
-        
-        tabs.select(
-            fn=lambda: gr.update(choices=get_feeds()),
-            inputs=[],
-            outputs=feed_dropdown
-        )
+                config_manager.reset_to_default()
+                return "配置已重置为默认值，请刷新页面查看更新后的配置"
+            
+            reset_config_btn.click(
+                fn=reset_config,
+                inputs=None,
+                outputs=config_status
+            )
+            
+            # 标签页切换事件
+            rss_tabs.select(
+                fn=lambda: None,
+                inputs=[],
+                outputs=[]
+            )
+            
+            tabs.select(
+                fn=lambda tab_index: gr.update(choices=get_feeds()) if tab_index == 0 else None,
+                inputs=[gr.State(0)],
+                outputs=feed_dropdown
+            ).then(
+                fn=lambda tab_index: update_feed_list("全部", "") if tab_index == 1 else None,
+                inputs=[gr.State(1)],
+                outputs=feed_list
+            )
+            
+            # 初始化RSS源列表
+            app.load(
+                fn=update_feed_list,
+                inputs=[gr.State("全部"), gr.State("")],
+                outputs=feed_list
+            )
     
     return app
 
-def main(host="0.0.0.0", port=7860, share=False):
+def main(host="127.0.0.1", port=7860, share=False):
     """主函数"""
     # 确保数据目录存在
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
@@ -622,6 +917,17 @@ def main(host="0.0.0.0", port=7860, share=False):
     # 创建并启动UI
     app = create_ui()
     app.launch(server_name=host, server_port=port, share=share)
+
+def show_feed_stats():
+    """显示RSS源统计"""
+    html, plot = get_feed_stats()
+    # 设置统计行可见
+    return gr.update(visible=True), html, plot
+
+def hide_feed_stats():
+    """隐藏RSS源统计"""
+    # 设置统计行不可见
+    return gr.update(visible=False), None, None
 
 if __name__ == "__main__":
     main() 

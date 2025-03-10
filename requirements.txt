@@ -25,6 +25,7 @@ einops>=0.7.0
 gradio 
 pandas 
 matplotlib
+python-dotenv>=1.0.0
 # pip install 'urllib3<2'
 # pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu124
 # CMAKE_ARGS="-DLLAVA_BUILD=OFF" pip install -U llama-cpp-python

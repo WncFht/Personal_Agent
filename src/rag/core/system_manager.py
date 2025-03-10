@@ -1,4 +1,4 @@
-from typing import Dict, Any, Optional, List, Tuple, Iterator
+from typing import Dict, Any, Optional, List, Tuple, Iterator, Union
 from datetime import datetime
 from loguru import logger
 
@@ -19,13 +19,13 @@ from ...rss.models import Entry
 class SystemManager:
     """系统管理器，用于初始化和协调所有组件"""
     
-    def __init__(self, config_path: str = "config/app_config.json"):
+    def __init__(self, config: Union[str, Dict[str, Any]] = "config/app_config.json"):
         """初始化系统管理器
         
         Args:
-            config_path: 配置文件路径
+            config: 配置文件路径或配置字典
         """
-        self.config_path = config_path
+        self.config = config
         self.components = []
         self.initialized = False
     
@@ -45,7 +45,14 @@ class SystemManager:
         container.register("system_manager", self)
         
         # 初始化配置管理器
-        config_manager = ConfigManager(self.config_path)
+        if isinstance(self.config, str):
+            # 如果是字符串，则作为配置文件路径
+            config_manager = ConfigManager(config_path=self.config)
+        else:
+            # 如果是字典，则作为配置内容
+            config_manager = ConfigManager()
+            config_manager.update_config(self.config, save_to_user_config=False)
+        
         config_manager.initialize()
         self.components.append(config_manager)
         

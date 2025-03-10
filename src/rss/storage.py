@@ -538,4 +538,46 @@ class RSSStorage:
         count = cursor.fetchone()[0]
         
         conn.close()
+        return count
+        
+    def get_entry_count(self, feed_id: Optional[int] = None) -> int:
+        """
+        获取条目总数
+        
+        Args:
+            feed_id: 可选的Feed ID，如果提供则只计算该Feed的条目
+            
+        Returns:
+            条目总数
+        """
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        query = 'SELECT COUNT(*) FROM entries'
+        params = []
+        
+        if feed_id is not None:
+            query += ' WHERE feed_id = ?'
+            params.append(feed_id)
+            
+        cursor.execute(query, params)
+        count = cursor.fetchone()[0]
+        
+        conn.close()
+        return count
+        
+    def get_feed_count(self) -> int:
+        """
+        获取RSS源总数
+        
+        Returns:
+            RSS源总数
+        """
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT COUNT(*) FROM feeds')
+        count = cursor.fetchone()[0]
+        
+        conn.close()
         return count 

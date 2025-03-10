@@ -4,6 +4,7 @@ from loguru import logger
 
 from .config import RAGConfig
 from .core.system_manager import SystemManager
+from .core.config_manager import ConfigManager
 from ..rss.models import Entry
 from ..utils.dependency_container import container
 from .templates import ORIGINAL_RAG_PROMPT_TEMPLATE, ENHANCED_RAG_PROMPT_TEMPLATE
@@ -11,16 +12,48 @@ from .templates import ORIGINAL_RAG_PROMPT_TEMPLATE, ENHANCED_RAG_PROMPT_TEMPLAT
 class RSSRAG:
     """RSS-RAG系统主类（新版本，基于模块化架构）"""
     
-    def __init__(self, config: RAGConfig):
+    def __init__(self, config: Optional[RAGConfig] = None, config_manager: Optional[ConfigManager] = None):
         """初始化RSS-RAG系统
         
         Args:
-            config: 配置对象
+            config: 配置对象，如果为None则使用config_manager
+            config_manager: 配置管理器，如果为None则创建一个新的
         """
-        self.config = config
+        # 初始化配置管理器
+        if config_manager is not None:
+            self.config_manager = config_manager
+        else:
+            self.config_manager = ConfigManager()
+            # 确保初始化配置管理器
+            self.config_manager.initialize()
         
-        # 将RAGConfig转换为字典
-        config_dict = {
+        # 设置配置
+        if config is not None:
+            # 如果提供了配置对象，使用它
+            self.config = config
+            # 将配置同步到配置管理器
+            config_dict = self._config_to_dict(config)
+            self.config_manager.update_config(config_dict, save_to_user_config=False)
+        else:
+            # 否则从配置管理器获取配置
+            self.config = self.config_manager.get_rag_config()
+        
+        # 注册配置变更回调
+        self.config_manager.register_change_callback(self._on_config_changed)
+        
+        # 初始化系统管理器
+        self._init_system_manager()
+    
+    def _config_to_dict(self, config: RAGConfig) -> Dict[str, any]:
+        """将RAGConfig转换为字典
+        
+        Args:
+            config: 配置对象
+            
+        Returns:
+            Dict[str, any]: 配置字典
+        """
+        return {
             "base_dir": config.base_dir,
             "device": config.device,
             "llm_type": config.llm_type,
@@ -50,22 +83,60 @@ class RSSRAG:
             "use_parallel_processing": config.use_parallel_processing,
             "max_workers": config.max_workers
         }
+    
+    def _init_system_manager(self):
+        """初始化系统管理器"""
+        # 获取配置字典
+        config_dict = self._config_to_dict(self.config)
         
-        # 创建系统管理器
-        self.system_manager = SystemManager()
+        # 初始化系统管理器
+        self.system_manager = SystemManager(config_dict)
         
         # 初始化系统
-        try:
-            # 先初始化系统
-            self.system_manager.initialize()
+        self.system_manager.initialize()
+    
+    def _on_config_changed(self, old_config: Dict[str, any], new_config: Dict[str, any]):
+        """配置变更回调函数
+        
+        Args:
+            old_config: 旧配置
+            new_config: 新配置
+        """
+        # 检查关键配置是否发生变化
+        critical_changes = False
+        critical_keys = [
+            "base_dir", "device", "llm_type", "llm_model_id", 
+            "embedding_model_id", "reranker_model_id"
+        ]
+        
+        for key in critical_keys:
+            if key in old_config and key in new_config and old_config[key] != new_config[key]:
+                critical_changes = True
+                break
+        
+        # 更新配置对象
+        self.config = self.config_manager.get_rag_config()
+        
+        # 如果关键配置发生变化，需要重新初始化系统
+        if critical_changes:
+            logger.info("检测到关键配置变更，重新初始化系统")
+            self._init_system_manager()
+        else:
+            # 否则只更新非关键配置
+            logger.info("检测到配置变更，更新系统配置")
+            self.system_manager.update_config(new_config)
+    
+    def update_config(self, config_updates: Dict[str, any], save_to_user_config: bool = True) -> bool:
+        """更新配置
+        
+        Args:
+            config_updates: 要更新的配置
+            save_to_user_config: 是否保存到用户配置文件
             
-            # 更新配置
-            self.system_manager.update_config(config_dict)
-            
-            logger.info("RSS-RAG系统初始化成功")
-        except Exception as e:
-            logger.error(f"RSS-RAG系统初始化失败: {e}")
-            raise
+        Returns:
+            bool: 配置是否成功更新
+        """
+        return self.config_manager.update_config(config_updates, save_to_user_config)
     
     def process_entry(self, entry: Entry) -> None:
         """处理单个RSS条目

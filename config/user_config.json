@@ -1,0 +1,13 @@
+{
+  "device": "cuda",
+  "llm_type": "deepseek",
+  "deepseek_model": "deepseek-chat",
+  "system_prompt": "你是一个专注于科技和人工智能领域的AI助手，擅长回答相关问题。",
+  "chunk_size": 800,
+  "chunk_overlap": 100,
+  "top_k": 5,
+  "use_reranker": true,
+  "use_query_enhancement": true,
+  "use_cache": true,
+  "deepseek_api_key": "sk-e77947a6ad2146f29fe2d641ea960adc"
+}
